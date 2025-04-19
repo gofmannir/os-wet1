@@ -103,6 +103,18 @@ Command *SmallShell::CreateCommand(const char *cmd_line)
     {
         return new ChpromptCommand(cmd_line);
     }
+    if (firstWord.compare("showpid") == 0)
+    {
+        return new ShowPidCommand(cmd_line);
+    }
+    if (firstWord.compare("pwd") == 0)
+    {
+        return new PwdCommand(cmd_line);
+    }
+    if (firstWord.compare("cd") == 0)
+    {
+        return new ChangeDirCommand(cmd_line, getPlastPwd());
+    }
     // For example:
     /*
     string cmd_s = _trim(string(cmd_line));
@@ -160,4 +172,73 @@ void ChpromptCommand::execute()
     {
         smash.setPrompt(this->args[1]);
     }
+}
+
+void ShowPidCommand::execute()
+{
+    pid_t pid = getpid();
+    if (pid == -1)
+    {
+        cerr << "smash error: getpid failed" << endl;
+    }
+    else
+    {
+        std::cout << "smash pid is " << pid << std::endl;
+    }
+}
+
+void PwdCommand::execute()
+{
+    char cwd_buf[COMMAND_MAX_LENGTH];
+    auto pwd = getcwd(cwd_buf, sizeof(cwd_buf));
+    if (pwd != nullptr)
+    {
+        std::cout << pwd << std::endl;
+    }
+    else
+    {
+        cerr << "smash error: getcwd failed" << endl;
+    }
+}
+
+void ChangeDirCommand::execute()
+{
+    if (this->args_count == 1)
+    {
+        return;
+    }
+
+    if (this->args_count > 2)
+    {
+        cerr << "smash error: cd: too many arguments" << endl;
+        return;
+    }
+
+    std::string path(this->args[1]);
+    if (path == "-" && *plastPwd == nullptr)
+    {
+        cerr << "smash error: cd: OLDPWD not set" << endl;
+        return;
+    }
+
+    if (path == "-")
+    {
+        path = *this->plastPwd;
+    }
+
+    char current_directory[COMMAND_MAX_LENGTH];
+    if (!getcwd(current_directory, sizeof(current_directory)))
+    {
+        cerr << "smash error: getcwd failed" << endl;
+        return;
+    }
+
+    if (chdir(path.c_str()) == -1)
+    {
+        cerr << "smash error: chdir failed" << endl;
+        return;
+    }
+
+    SmallShell &smash = SmallShell::getInstance();
+    smash.updatePlastPwd(strdup(current_directory));
 }

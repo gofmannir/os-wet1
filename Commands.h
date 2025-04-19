@@ -89,6 +89,15 @@ public:
 
     void execute() override;
 };
+class PwdCommand : public BuiltInCommand
+{
+public:
+    PwdCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {};
+
+    virtual ~PwdCommand() {}
+
+    void execute() override;
+};
 
 class DiskUsageCommand : public Command
 {
@@ -130,10 +139,13 @@ public:
 class ChangeDirCommand : public BuiltInCommand
 {
     // TODO: Add your data members public:
-    ChangeDirCommand(const char *cmd_line, char **plastPwd);
+public:
+    char **plastPwd;
+    ChangeDirCommand(const char *cmd_line, char **plastPwd) : BuiltInCommand(cmd_line), plastPwd(plastPwd) {}
 
     virtual ~ChangeDirCommand()
     {
+        this->plastPwd = nullptr;
     }
 
     void execute() override;
@@ -154,7 +166,7 @@ public:
 class ShowPidCommand : public BuiltInCommand
 {
 public:
-    ShowPidCommand(const char *cmd_line);
+    ShowPidCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {}
 
     virtual ~ShowPidCommand()
     {
@@ -303,7 +315,10 @@ private:
     // TODO: Add your data members
 
     std::string prompt;
-    SmallShell() : prompt("smash") {}
+    char *plastPwd;
+    SmallShell() : prompt("smash"), plastPwd(nullptr)
+    {
+    }
 
 public:
     Command *CreateCommand(const char *cmd_line);
@@ -327,8 +342,26 @@ public:
         this->prompt = val;
     }
 
+    char **getPlastPwd()
+    {
+        return &this->plastPwd;
+    }
+
+    void updatePlastPwd(char *newPtr)
+    {
+        if (this->plastPwd)
+        {
+            free(this->plastPwd);
+        }
+        this->plastPwd = newPtr;
+    }
+
     ~SmallShell()
     {
+        if (this->plastPwd)
+        {
+            free(this->plastPwd);
+        }
     }
 
     void executeCommand(const char *cmd_line);

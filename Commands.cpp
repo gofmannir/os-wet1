@@ -5,7 +5,11 @@
 #include <sstream>
 #include <sys/wait.h>
 #include <iomanip>
+#include <sys/ioctl.h>
 #include <fcntl.h>
+#include <sys/socket.h>
+#include <net/if.h>
+#include <arpa/inet.h>
 #include "Commands.h"
 
 using namespace std;
@@ -423,25 +427,25 @@ Command *SmallShell::CreateCommand(const char *cmd_line)
         return new RedirectionCommand(cmd_line, command, output_file, append);
     }
 
-    if (firstWord == "alias")
+    if (firstWord.compare("alias") == 0)
     {
         return new AliasCommand(cmd_line);
     }
 
-    if (firstWord == "jobs")
+    if (firstWord.compare("jobs") == 0)
     {
         return new JobsCommand(cmd_line, &jobs);
     }
 
-    if (firstWord == "fg")
+    if (firstWord.compare("fg") == 0)
     {
         return new ForegroundCommand(cmd_line, &jobs);
     }
-    if (firstWord == "quit")
+    if (firstWord.compare("quit") == 0)
     {
         return new QuitCommand(cmd_line, &jobs);
     }
-    if (firstWord == "kill")
+    if (firstWord.compare("kill") == 0)
     {
         return new KillCommand(cmd_line, &jobs);
     }
@@ -453,7 +457,7 @@ Command *SmallShell::CreateCommand(const char *cmd_line)
     {
         return new ShowPidCommand(cmd_line);
     }
-    if (firstWord == "unalias")
+    if (firstWord.compare("unalias") == 0)
     {
         return new UnAliasCommand(cmd_line);
     }
@@ -464,6 +468,15 @@ Command *SmallShell::CreateCommand(const char *cmd_line)
     if (firstWord.compare("cd") == 0)
     {
         return new ChangeDirCommand(cmd_line, getPlastPwd());
+    }
+    if (firstWord.compare("whoami") == 0)
+    {
+        return new WhoAmICommand(cmd_line);
+    }
+
+    if (firstWord.compare("netinfo") == 0)
+    {
+        return new NetInfo(cmd_line);
     }
 
     string updated_str_after_aliases(cmd_line);
@@ -917,4 +930,278 @@ void PipeCommand::execute()
     // wait both the childs to finish and see the out of the cmd2 child
     waitpid(pid1, nullptr, 0);
     waitpid(pid2, nullptr, 0);
+}
+
+WhoAmICommand::WhoAmICommand(const char *cmd_line) : Command(cmd_line) {}
+void WhoAmICommand::execute()
+{
+    uid_t effectiveUserId = geteuid(); // Get the effective user ID
+    std::string username, homeDirectory;
+
+    // Retrieve username and home directory
+    this->fetchUserInfo(effectiveUserId, username, homeDirectory);
+
+    // Print the result
+    std::cout << username << " " << homeDirectory << std::endl;
+}
+
+void WhoAmICommand::fetchUserInfo(uid_t userId, std::string &username, std::string &homeDirectory)
+{
+    int passwdFileDescriptor = open("/etc/passwd", O_RDONLY);
+    if (passwdFileDescriptor == -1)
+    {
+        perror("smash error: open failed");
+        return;
+    }
+
+    char buffer[4096];
+    ssize_t bytesRead = 0;
+    std::string leftoverData;
+
+    while ((bytesRead = read(passwdFileDescriptor, buffer, sizeof(buffer))) > 0)
+    {
+        string data(buffer, bytesRead);
+        leftoverData += data;
+
+        size_t lineEnd = 0;
+        while ((lineEnd = leftoverData.find('\n')) != std::string::npos)
+        {
+            std::string line = leftoverData.substr(0, lineEnd);
+            leftoverData = leftoverData.substr(lineEnd + 1);
+
+            std::string user, uidStr, home;
+            size_t field = 0, start = 0;
+            uid_t entryUid = -1;
+
+            for (size_t i = 0; i <= line.size(); ++i)
+            {
+                if (i == line.size() || line[i] == ':')
+                {
+                    std::string fieldValue = line.substr(start, i - start);
+                    start = i + 1;
+
+                    switch (field++)
+                    {
+                    case 0:
+                        user = fieldValue; // Username
+                        break;
+                    case 2:
+                        uidStr = fieldValue; // UID
+                        entryUid = std::stoi(uidStr);
+                        break;
+                    case 5:
+                        home = fieldValue; // Home directory
+                        break;
+                    }
+                }
+            }
+
+            if (entryUid == userId)
+            {
+                username = user;
+                homeDirectory = home;
+                if (close(passwdFileDescriptor) == -1)
+                {
+                    perror("smash error: close failed");
+                }
+                passwdFileDescriptor = -1;
+                return;
+            }
+        }
+    }
+
+    if (bytesRead == -1)
+    {
+        perror("smash error: read failed");
+    }
+
+    if (passwdFileDescriptor != -1)
+    {
+        if (close(passwdFileDescriptor) == -1)
+        {
+            perror("smash error: close failed");
+        }
+        passwdFileDescriptor = -1;
+    }
+}
+
+NetInfo::NetInfo(const char *cmd_line) : Command(cmd_line) {}
+
+void NetInfo::execute()
+{
+    if (args_count < 2)
+    {
+        std::cerr << "smash error: netinfo: interface not specified" << std::endl;
+        return;
+    }
+
+    std::string ifname = args[1];
+
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0)
+    {
+        perror("smash error: socket failed");
+        return;
+    }
+
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname.c_str(), IFNAMSIZ - 1);
+
+    // Get IP Address
+    if (ioctl(sock, SIOCGIFADDR, &ifr) < 0)
+    {
+        std::cerr << "smash error: netinfo: interface " << ifname << " does not exist" << std::endl;
+        close(sock);
+        return;
+    }
+    struct sockaddr_in *ip_addr = (struct sockaddr_in *)&ifr.ifr_addr;
+    char ip_str[INET_ADDRSTRLEN];
+    if (!inet_ntop(AF_INET, &ip_addr->sin_addr, ip_str, sizeof(ip_str)))
+    {
+        perror("smash error: inet_ntop failed");
+        close(sock);
+        return;
+    }
+
+    // Get Netmask
+    if (ioctl(sock, SIOCGIFNETMASK, &ifr) < 0)
+    {
+        perror("smash error: ioctl failed");
+        close(sock);
+        return;
+    }
+    struct sockaddr_in *nm_addr = (struct sockaddr_in *)&ifr.ifr_netmask;
+    char mask_str[INET_ADDRSTRLEN];
+    if (!inet_ntop(AF_INET, &nm_addr->sin_addr, mask_str, sizeof(mask_str)))
+    {
+        perror("smash error: inet_ntop failed");
+        close(sock);
+        return;
+    }
+
+    close(sock);
+
+    // Get Default Gateway from /proc/net/route
+    std::string gateway_str;
+    {
+        int fd = open("/proc/net/route", O_RDONLY);
+        if (fd < 0)
+        {
+            perror("smash error: open failed");
+            // Not having route info isn't fatal to the rest; we just won't print gateway.
+        }
+        else
+        {
+            char line[BUF_SIZE];
+            // Skip the header line
+            if (readLine(fd, line, sizeof(line)) < 0)
+            {
+                // readLine already printed perror, just close and continue
+                close(fd);
+            }
+            else
+            {
+                while (true)
+                {
+                    ssize_t rd = readLine(fd, line, sizeof(line));
+                    if (rd < 0)
+                    {
+                        // readLine printed error
+                        break;
+                    }
+                    if (rd == 0)
+                    {
+                        // EOF
+                        break;
+                    }
+
+                    // Parse the line
+                    char iface[IFNAMSIZ];
+                    char dest[32], gate[32];
+                    if (sscanf(line, "%s %s %s", iface, dest, gate) == 3)
+                    {
+                        if (ifname == iface && strcmp(dest, "00000000") == 0)
+                        {
+                            unsigned long g;
+                            if (sscanf(gate, "%lx", &g) == 1)
+                            {
+                                struct in_addr ga;
+                                ga.s_addr = g;
+                                char g_ip[INET_ADDRSTRLEN];
+                                if (!inet_ntop(AF_INET, &ga, g_ip, sizeof(g_ip)))
+                                {
+                                    perror("smash error: inet_ntop failed");
+                                    break;
+                                }
+                                gateway_str = g_ip;
+                                break;
+                            }
+                        }
+                    }
+                }
+                close(fd);
+            }
+        }
+    }
+
+    // Get DNS servers from /etc/resolv.conf
+    std::string dns_list;
+    {
+        int fd = open("/etc/resolv.conf", O_RDONLY);
+        if (fd < 0)
+        {
+            // If resolv.conf can't be opened, no DNS info
+            perror("smash error: open failed");
+        }
+        else
+        {
+            char line[BUF_SIZE];
+            while (true)
+            {
+                ssize_t n = readLine(fd, line, sizeof(line));
+                if (n < 0)
+                {
+                    // readLine printed error
+                    break;
+                }
+                if (n == 0)
+                {
+                    // EOF
+                    break;
+                }
+                char *p = line;
+                while (*p == ' ' || *p == '\t')
+                    p++;
+                if (strncmp(p, "nameserver", 10) == 0)
+                {
+                    p += 10;
+                    while (*p == ' ' || *p == '\t')
+                        p++;
+                    if (*p != '\0' && *p != '\n')
+                    {
+                        std::string dns_ip(p);
+                        // Remove trailing newline
+                        dns_ip.erase(dns_ip.find_last_not_of("\r\n") + 1);
+                        if (!dns_list.empty())
+                            dns_list += ", ";
+                        dns_list += dns_ip;
+                    }
+                }
+            }
+            close(fd);
+        }
+    }
+
+    // Print results
+    std::cout << "IP Address: " << ip_str << std::endl;
+    std::cout << "Subnet Mask: " << mask_str << std::endl;
+    if (!gateway_str.empty())
+    {
+        std::cout << "Default Gateway: " << gateway_str << std::endl;
+    }
+    if (!dns_list.empty())
+    {
+        std::cout << "DNS Servers: " << dns_list << std::endl;
+    }
 }

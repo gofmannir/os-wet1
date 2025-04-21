@@ -12,6 +12,7 @@
 
 #define COMMAND_MAX_LENGTH (200)
 #define COMMAND_MAX_ARGS (20)
+#define BUF_SIZE (4096)
 
 using namespace std;
 
@@ -122,12 +123,9 @@ class WhoAmICommand : public Command
 {
 public:
     WhoAmICommand(const char *cmd_line);
-
-    virtual ~WhoAmICommand()
-    {
-    }
-
+    virtual ~WhoAmICommand() {}
     void execute() override;
+    void fetchUserInfo(uid_t uid, string &username, string &homeDir);
 };
 
 class NetInfo : public Command

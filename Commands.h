@@ -3,9 +3,17 @@
 #define SMASH_COMMAND_H_
 
 #include <vector>
+#include <string>
+#include <list>
+#include <set>
+#include <map>
+#include <regex>
+#include <unordered_map>
 
 #define COMMAND_MAX_LENGTH (200)
 #define COMMAND_MAX_ARGS (20)
+
+using namespace std;
 
 class Command
 {
@@ -45,11 +53,12 @@ public:
 class ExternalCommand : public Command
 {
 public:
-    ExternalCommand(const char *cmd_line);
+    string command;
+    bool is_background_command = false;
+    string original_cmd;
+    ExternalCommand(const char *cmd_line, string &command, bool is_background_command, string &original_cmd);
 
-    virtual ~ExternalCommand()
-    {
-    }
+    virtual ~ExternalCommand() {}
 
     void execute() override;
 };
@@ -180,10 +189,13 @@ class JobsList;
 class QuitCommand : public BuiltInCommand
 {
     // TODO: Add your data members public:
+public:
+    JobsList *jobs;
     QuitCommand(const char *cmd_line, JobsList *jobs);
 
     virtual ~QuitCommand()
     {
+        jobs = nullptr;
     }
 
     void execute() override;
@@ -195,15 +207,24 @@ public:
     class JobEntry
     {
         // TODO: Add your data members
+    public:
+        int job_id;
+        bool stopped;
+        pid_t pid;
+        string command;
+        JobEntry(int jobId, pid_t pid, const string &cmd, bool _stopped) : job_id(jobId), pid(pid), command(cmd),
+                                                                           stopped(_stopped) {}
     };
+    std::map<int, JobEntry> jobs;
+    int next;
 
     // TODO: Add your data members
 public:
     JobsList();
 
-    ~JobsList();
+    ~JobsList() = default;
 
-    void addJob(Command *cmd, bool isStopped = false);
+    void addJob(Command *cmd, pid_t pid, bool stopped = false);
 
     void printJobsList();
 
@@ -226,10 +247,12 @@ class JobsCommand : public BuiltInCommand
 {
     // TODO: Add your data members
 public:
+    JobsList *jobs;
     JobsCommand(const char *cmd_line, JobsList *jobs);
 
     virtual ~JobsCommand()
     {
+        jobs = nullptr;
     }
 
     void execute() override;
@@ -239,10 +262,12 @@ class KillCommand : public BuiltInCommand
 {
     // TODO: Add your data members
 public:
+    JobsList *jobs;
     KillCommand(const char *cmd_line, JobsList *jobs);
 
     virtual ~KillCommand()
     {
+        jobs = nullptr;
     }
 
     void execute() override;
@@ -252,10 +277,12 @@ class ForegroundCommand : public BuiltInCommand
 {
     // TODO: Add your data members
 public:
+    JobsList *jobs;
     ForegroundCommand(const char *cmd_line, JobsList *jobs);
 
     virtual ~ForegroundCommand()
     {
+        jobs = nullptr;
     }
 
     void execute() override;
@@ -316,11 +343,19 @@ private:
 
     std::string prompt;
     char *plastPwd;
-    SmallShell() : prompt("smash"), plastPwd(nullptr)
+
+    SmallShell() : prompt("smash"), plastPwd(nullptr), fg_pid(-1)
     {
     }
 
 public:
+    pid_t fg_pid;
+    JobsList jobs;
+    set<string> reserved = {"chprompt", "quit", "showpid", "pwd", "cd", "jobs", "fg", "unalias", "alias", "kill", "listdir", "whoami", "netinfo"};
+
+    unordered_map<string, string> aliases;
+    std::list<std::pair<std::string, std::string>> alias_list;
+
     Command *CreateCommand(const char *cmd_line);
 
     SmallShell(SmallShell const &) = delete;     // disable copy ctor

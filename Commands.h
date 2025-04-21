@@ -401,7 +401,10 @@ public:
 
     void executeCommand(const char *cmd_line);
 
-    // TODO: add extra methods as needed
+    list<std::pair<std::string, std::string>> &getAliases();
+    unordered_map<string, string> &getAliasesMap();
+
+    bool isReservedCommand(const string &command) const;
 };
 
 #endif // SMASH_COMMAND_H_

@@ -211,8 +211,89 @@ void KillCommand::execute()
     }
 }
 
+AliasCommand::AliasCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {}
+UnAliasCommand::UnAliasCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {}
+void AliasCommand::execute()
+{
+    SmallShell &smash = SmallShell::getInstance();
+    auto &aliases = smash.getAliasesMap();
+    auto &alias_list = smash.getAliases();
+
+    // Regex to validate the alias format
+    std::regex alias_regex("^alias ([a-zA-Z0-9_]+)='([^']*)'$");
+    std::smatch match;
+
+    if (this->args_count == 1)
+    {
+        // list all
+        for (const auto &entry : alias_list)
+        {
+            std::cout << entry.first << "='" << entry.second << "'" << std::endl;
+        }
+        return;
+    }
+
+    // make a new alias
+    string input = _trim(string(cmd_line));
+    if (std::regex_match(input, match, alias_regex))
+    {
+        string name = match[1];    // alias name
+        string command = match[2]; // command
+
+        // Check if name is a reserved keyword or existing alias
+        if (aliases.find(name) != aliases.end() || smash.isReservedCommand(name))
+        {
+            std::cerr << "smash error: alias: " << name << " already exists or is a reserved command" << std::endl;
+            return;
+        }
+
+        // save
+        aliases[name] = command;
+        alias_list.emplace_back(name, command);
+    }
+    else
+    {
+        // Invalid syntax
+        std::cerr << "smash error: alias: invalid alias format" << std::endl;
+    }
+}
+// unalias command (built in command)
+void UnAliasCommand::execute()
+{
+    SmallShell &smash = SmallShell::getInstance();
+    auto &aliases = smash.getAliasesMap();
+    auto &aliases_list = smash.getAliases();
+
+    // no arguments provided
+    if (args_count == 1)
+    {
+        std::cerr << "smash error: unalias: not enough arguments" << std::endl;
+        return;
+    }
+
+    // Iterate through the provided alias names
+    for (int i = 1; i < args_count; i++)
+    {
+        string alias_name(args[i]);
+
+        // Check if the alias exists
+        if (aliases.find(alias_name) == aliases.end())
+        {
+            std::cerr << "smash error: unalias: " << alias_name << " alias does not exist" << std::endl;
+            return;
+        }
+
+        // Remove
+        aliases.erase(alias_name);
+        aliases_list.remove_if([&alias_name](const std::pair<std::string, std::string> &alias)
+                               { return alias.first == alias_name; });
+    }
+}
+
 Command *SmallShell::CreateCommand(const char *cmd_line)
 {
+    // Check if the command matches an alias
+    SmallShell &smash = SmallShell::getInstance();
 
     string cmd_s = _trim(string(cmd_line));
     string org_cmd_line = cmd_s;
@@ -221,14 +302,30 @@ Command *SmallShell::CreateCommand(const char *cmd_line)
     {
         return nullptr; // Return nullptr for empty commands
     }
+
     string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
     firstWord = _trim(firstWord);
+
+    auto &aliases = smash.getAliasesMap();
+    auto aliasIter = aliases.find(firstWord);
+    if (aliasIter != aliases.end())
+    {
+        // Expand the alias
+        cmd_s = _trim(aliasIter->second + cmd_s.substr(firstWord.size()));
+        firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
+        cmd_line = strdup(cmd_s.c_str());
+    }
 
     bool is_background_command = _isBackgroundComamnd(cmd_line);
     if (is_background_command)
     {
         _removeBackgroundSign(const_cast<char *>(cmd_line));
         _removeBackgroundSign(const_cast<char *>(cmd_s.c_str()));
+    }
+
+    if (firstWord == "alias")
+    {
+        return new AliasCommand(cmd_line);
     }
 
     if (firstWord == "jobs")
@@ -255,6 +352,10 @@ Command *SmallShell::CreateCommand(const char *cmd_line)
     if (firstWord.compare("showpid") == 0)
     {
         return new ShowPidCommand(cmd_line);
+    }
+    if (firstWord == "unalias")
+    {
+        return new UnAliasCommand(cmd_line);
     }
     if (firstWord.compare("pwd") == 0)
     {
@@ -601,4 +702,19 @@ JobsList::JobEntry *JobsList::getLastStoppedJob(int *jobId)
         *jobId = max;
     }
     return &(jobs.find(max)->second);
+}
+
+std::list<std::pair<std::string, std::string>> &SmallShell::getAliases()
+{
+    return this->alias_list;
+}
+
+unordered_map<string, string> &SmallShell::getAliasesMap()
+{
+    return this->aliases;
+}
+
+bool SmallShell::isReservedCommand(const string &command) const
+{
+    return this->reserved.find(command) != this->reserved.end();
 }

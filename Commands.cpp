@@ -387,6 +387,25 @@ Command *SmallShell::CreateCommand(const char *cmd_line)
         cmd_line = strdup(cmd_s.c_str());
     }
 
+    // Pipe logic
+    size_t pipe_position = cmd_s.find("|&");
+    bool is_stderr_redirect = (pipe_position != string::npos);
+
+    if (!is_stderr_redirect)
+    {
+        pipe_position = cmd_s.find('|');
+    }
+
+    if (pipe_position != string::npos)
+    {
+        // Split the command into two parts
+        std::string first_command = _trim(cmd_s.substr(0, pipe_position));
+        std::string second_command = _trim(cmd_s.substr(pipe_position + (is_stderr_redirect ? 2 : 1)));
+
+        // Return a PipeCommand object
+        return new PipeCommand(cmd_line, first_command, second_command, is_stderr_redirect);
+    }
+
     bool is_background_command = _isBackgroundComamnd(cmd_line);
     if (is_background_command)
     {
@@ -446,24 +465,6 @@ Command *SmallShell::CreateCommand(const char *cmd_line)
     {
         return new ChangeDirCommand(cmd_line, getPlastPwd());
     }
-    // For example:
-    /*
-    string cmd_s = _trim(string(cmd_line));
-    string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
-
-    if (firstWord.compare("pwd") == 0) {
-      return new GetCurrDirCommand(cmd_line);
-    }
-    else if (firstWord.compare("showpid") == 0) {
-      return new ShowPidCommand(cmd_line);
-    }
-    else if ...
-    .....
-    else {
-      return new ExternalCommand(cmd_line);
-    }
-    */
-    // ExternalCommand::ExternalCommand(const char *cmd_line, string &com, bool is_background_command, string &original) : Command(cmd_line), command(com), is_background_command(is_background_command), original_cmd(original) {}
 
     string updated_str_after_aliases(cmd_line);
     return new ExternalCommand(cmd_line, updated_str_after_aliases, is_background_command, org_cmd_line);
@@ -513,7 +514,7 @@ void ShowPidCommand::execute()
     pid_t pid = getpid();
     if (pid == -1)
     {
-        cerr << "smash error: getpid failed" << endl;
+        perror("smash error: getpid failed");
     }
     else
     {
@@ -531,7 +532,7 @@ void PwdCommand::execute()
     }
     else
     {
-        cerr << "smash error: getcwd failed" << endl;
+        perror("smash error: getcwd failed");
     }
 }
 
@@ -563,13 +564,13 @@ void ChangeDirCommand::execute()
     char current_directory[COMMAND_MAX_LENGTH];
     if (!getcwd(current_directory, sizeof(current_directory)))
     {
-        cerr << "smash error: getcwd failed" << endl;
+        perror("smash error: getcwd failed");
         return;
     }
 
     if (chdir(path.c_str()) == -1)
     {
-        cerr << "smash error: chdir failed" << endl;
+        perror("smash error: chdir failed");
         return;
     }
 
@@ -798,4 +799,122 @@ unordered_map<string, string> &SmallShell::getAliasesMap()
 bool SmallShell::isReservedCommand(const string &command) const
 {
     return this->reserved.find(command) != this->reserved.end();
+}
+
+PipeCommand::PipeCommand(const std::string &cmd_line, const std::string &part1, const std::string &part2, bool is_stderr) : Command(cmd_line.c_str()), cmd1(part1), cmd2(part2), is_stderr(is_stderr) {}
+
+void PipeCommand::execute()
+{
+
+    int pipe_fd[2];
+
+    // creating a pipe object with syscall
+    if (pipe(pipe_fd) == -1)
+    {
+        perror("smash error: pipe failed");
+        return;
+    }
+
+    SmallShell &smash = SmallShell::getInstance();
+    pid_t pid1 = fork();
+
+    if (pid1 == -1)
+    {
+        perror("smash error: fork failed");
+        return;
+    }
+
+    if (pid1 == 0)
+    {
+        // Child
+        setpgrp();
+        if (close(pipe_fd[0]) == -1)
+        {
+            perror("smash error: close failed");
+            exit(1);
+        }
+
+        // 1 is for write end in the pipe
+        // redirects out/err to the pipe
+        // dup2 for closing the fd to make sure other reads will end
+        if (dup2(pipe_fd[1], is_stderr ? STDERR_FILENO : STDOUT_FILENO) == -1)
+        {
+            perror("smash error: dup2 failed");
+            exit(1);
+        }
+
+        if (close(pipe_fd[1]) == -1)
+        {
+            perror("smash error: close failed");
+            exit(1);
+        }
+
+        // Execute
+        Command *cmd1 = smash.CreateCommand(this->cmd1.c_str());
+        if (cmd1)
+        {
+            cmd1->execute();
+            delete cmd1;
+            exit(0);
+        }
+        exit(1);
+    }
+
+    pid_t pid2 = fork();
+    if (pid2 == -1)
+    {
+        perror("smash error: fork failed");
+        return;
+    }
+
+    if (pid2 == 0)
+    {
+        // Child
+        setpgrp();
+
+        // this process child should not have the write fd to the pipe so we close it
+        if (close(pipe_fd[1]) == -1)
+        {
+            perror("smash error: close failed");
+            exit(1);
+        }
+
+        // Again like before
+        if (dup2(pipe_fd[0], STDIN_FILENO) == -1)
+        {
+            perror("smash error: dup2 failed");
+            exit(1);
+        }
+
+        if (close(pipe_fd[0]) == -1)
+        {
+            perror("smash error: close failed");
+            exit(1);
+        }
+
+        // Execute
+        Command *cmd2 = smash.CreateCommand(this->cmd2.c_str());
+        if (cmd2)
+        {
+            cmd2->execute();
+            delete cmd2;
+            exit(0);
+        }
+        exit(1);
+    }
+
+    // closing in the parent
+    if (close(pipe_fd[0]) == -1)
+    {
+        perror("smash error: close failed");
+    }
+
+    if (close(pipe_fd[1]) == -1)
+    {
+        perror("smash error: close failed");
+    }
+
+    // wait both the childs to finish and see the out of the cmd2 child
+    waitpid(pid1, nullptr, 0);
+    waitpid(pid2, nullptr, 0);
 }

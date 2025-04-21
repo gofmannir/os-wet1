@@ -77,14 +77,13 @@ public:
 
 class PipeCommand : public Command
 {
-    // TODO: Add your data members
 public:
-    PipeCommand(const char *cmd_line);
+    string cmd1;
+    string cmd2;
+    bool is_stderr;
 
-    virtual ~PipeCommand()
-    {
-    }
-
+    PipeCommand(const std::string &cmd_line, const std::string &part1, const std::string &part2, bool is_stderr);
+    virtual ~PipeCommand() {}
     void execute() override;
 };
 

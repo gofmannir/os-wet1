@@ -5,6 +5,7 @@
 #include <sstream>
 #include <sys/wait.h>
 #include <iomanip>
+#include <fcntl.h>
 #include "Commands.h"
 
 using namespace std;
@@ -290,6 +291,76 @@ void UnAliasCommand::execute()
     }
 }
 
+RedirectionCommand::RedirectionCommand(const std::string &cmd_line, const std::string &command, const std::string &output_file, bool append)
+    : Command(cmd_line.c_str()), output_file(output_file), command(command), append(append) {}
+
+void RedirectionCommand::execute()
+{
+    string run_command = string(this->command);
+    string out_file = string(this->output_file);
+    int temp_stdout_fd = dup(STDOUT_FILENO);
+    if (temp_stdout_fd == -1)
+    {
+        perror("smash error: dup failed");
+        return;
+    }
+
+    int open_flags = O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC);
+    int fd = open(out_file.c_str(), open_flags, 0644);
+    if (fd == -1)
+    {
+        perror("smash error: open failed");
+        return;
+    }
+
+    if (dup2(fd, STDOUT_FILENO) == -1)
+    {
+        perror("smash error: dup2 failed");
+        close(fd);
+        return;
+    }
+
+    close(fd);
+
+    // Execute the run_command
+    SmallShell &smash = SmallShell::getInstance();
+    smash.executeCommand(run_command.c_str());
+
+    // Restore stdout
+    if (dup2(temp_stdout_fd, STDOUT_FILENO) == -1)
+    {
+        perror("smash error: dup2 failed");
+    }
+    close(temp_stdout_fd);
+}
+
+static ssize_t readLine(int fd, char *buffer, size_t max_len)
+{
+    size_t i = 0;
+    char c;
+    while (i < max_len - 1)
+    {
+        ssize_t n = read(fd, &c, 1);
+        if (n < 0)
+        {
+            perror("smash error: read failed");
+            return -1;
+        }
+        if (n == 0)
+        { // EOF
+            break;
+        }
+        if (c == '\n')
+        {
+            buffer[i++] = c;
+            break;
+        }
+        buffer[i++] = c;
+    }
+    buffer[i] = '\0';
+    return (ssize_t)i;
+}
+
 Command *SmallShell::CreateCommand(const char *cmd_line)
 {
     // Check if the command matches an alias
@@ -321,6 +392,16 @@ Command *SmallShell::CreateCommand(const char *cmd_line)
     {
         _removeBackgroundSign(const_cast<char *>(cmd_line));
         _removeBackgroundSign(const_cast<char *>(cmd_s.c_str()));
+    }
+
+    // Check for redirection
+    size_t redir_pos = cmd_s.find('>');
+    if (redir_pos != string::npos)
+    {
+        bool append = (cmd_s[redir_pos + 1] == '>');
+        auto command = _trim(cmd_s.substr(0, redir_pos));
+        string output_file = _trim(cmd_s.substr(redir_pos + (append ? 2 : 1)));
+        return new RedirectionCommand(cmd_line, command, output_file, append);
     }
 
     if (firstWord == "alias")

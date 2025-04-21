@@ -65,14 +65,13 @@ public:
 
 class RedirectionCommand : public Command
 {
-    // TODO: Add your data members
+
 public:
-    explicit RedirectionCommand(const char *cmd_line);
-
-    virtual ~RedirectionCommand()
-    {
-    }
-
+    string output_file;
+    string command;
+    bool append;
+    RedirectionCommand(const std::string &cmd_line, const std::string &command, const std::string &output_file, bool append);
+    virtual ~RedirectionCommand() {}
     void execute() override;
 };
 

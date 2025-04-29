@@ -39,7 +39,6 @@ Good luck :)
 
 TODO:
 
-unsetenv
 du
 
 tests :)

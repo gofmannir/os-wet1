@@ -10,6 +10,10 @@
 #include <sys/socket.h>
 #include <net/if.h>
 #include <arpa/inet.h>
+
+#include <dirent.h>
+#include <sys/stat.h>
+
 #include "Commands.h"
 
 using namespace std;
@@ -475,6 +479,10 @@ Command *SmallShell::CreateCommand(const char *cmd_line)
     {
         return new UnSetEnvCommand(cmd_line);
     }
+    if (firstWord.compare("du") == 0)
+    {
+        return new DuCommand(cmd_line);
+    }
     if (firstWord.compare("pwd") == 0)
     {
         return new PwdCommand(cmd_line);
@@ -616,7 +624,6 @@ void UnSetEnvCommand::execute()
         cerr << "smash error: unsetenv: not enough arguments" << endl;
     }
 
-    SmallShell &smash = SmallShell::getInstance();
     for (int i = 1; i < this->args_count; ++i)
     {
         if (!this->getEnv(this->args[i]))
@@ -1249,6 +1256,90 @@ void WhoAmICommand::fetchUserInfo(uid_t userId, std::string &username, std::stri
         }
         passwdFileDescriptor = -1;
     }
+}
+
+long calculateDiskUsage(const std::string &path)
+{
+    struct stat stat_buf;
+    if (lstat(path.c_str(), &stat_buf) == -1)
+    {
+        perror("smash error: lstat failed");
+        return 0;
+    }
+
+    // Add the size of the current file/directory
+    long total_size = stat_buf.st_blocks / 2; // Convert blocks to kilobytes (512 bytes per block)
+
+    // If it's a directory, recursively calculate the size of its contents
+    if (S_ISDIR(stat_buf.st_mode))
+    {
+        DIR *dir = opendir(path.c_str());
+        if (!dir)
+        {
+            perror("smash error: opendir failed");
+            return total_size;
+        }
+
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != nullptr)
+        {
+            std::string name = entry->d_name;
+
+            // Skip "." and ".."
+            if (name == "." || name == "..")
+            {
+                continue;
+            }
+
+            std::string full_path = path + "/" + name;
+            total_size += calculateDiskUsage(full_path);
+        }
+
+        if (closedir(dir) == -1)
+        {
+            perror("smash error: closedir failed");
+        }
+    }
+
+    return total_size;
+}
+
+void DuCommand::execute()
+{
+
+    if (this->args_count > 2)
+    {
+        cerr << "smash error: du: too many arguments" << endl;
+    }
+
+    string dir;
+
+    if (this->args_count == 1)
+    {
+        // current dir
+        char current_directory[COMMAND_MAX_LENGTH];
+        if (!getcwd(current_directory, sizeof(current_directory)))
+        {
+            perror("smash error: getcwd failed");
+            return;
+        }
+        dir = current_directory;
+    }
+
+    if (this->args_count == 2)
+    {
+        // specified dir
+        dir = this->args[1];
+    }
+
+    if (access(dir.c_str(), F_OK) == -1)
+    {
+        cerr << "smash error: du: directory " << dir << " does not exist" << endl;
+        return;
+    }
+
+    double total = calculateDiskUsage(dir);
+    cout << "Total disk usage: " << total << " KB" << endl;
 }
 
 NetInfo::NetInfo(const char *cmd_line) : Command(cmd_line) {}

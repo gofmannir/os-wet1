@@ -156,6 +156,19 @@ public:
     void execute() override;
 };
 
+class DuCommand : public Command
+{
+    // TODO: Add your data members public:
+public:
+    DuCommand(const char *cmd_line) : Command(cmd_line) {}
+
+    virtual ~DuCommand()
+    {
+    }
+
+    void execute() override;
+};
+
 class WatchProcCommand : public BuiltInCommand
 {
 public:
@@ -372,7 +385,7 @@ public:
         return this->prompt;
     }
 
-    std::string setPrompt(const std::string &val)
+    void setPrompt(const std::string &val)
     {
         this->prompt = val;
     }

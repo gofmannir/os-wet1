@@ -36,3 +36,10 @@ We recommend that you start your implementation with:
 - Finally implement the bonus command and pipes
 
 Good luck :)
+
+TODO:
+
+unsetenv
+du
+
+tests :)

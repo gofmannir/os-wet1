@@ -323,11 +323,14 @@ public:
 class UnSetEnvCommand : public BuiltInCommand
 {
 public:
-    UnSetEnvCommand(const char *cmd_line);
+    UnSetEnvCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {}
 
     virtual ~UnSetEnvCommand()
     {
     }
+
+    virtual bool getEnv(const char *env_name);
+    virtual void removeEnv(const char *env_name);
 
     void execute() override;
 };
@@ -347,7 +350,8 @@ private:
 public:
     pid_t fg_pid;
     JobsList jobs;
-    set<string> reserved = {"chprompt", "quit", "showpid", "pwd", "cd", "jobs", "fg", "unalias", "alias", "kill", "listdir", "whoami", "netinfo"};
+
+    set<string> reserved = {"chprompt", "quit", "showpid", "watchproc", "unsetenv", "pwd", "cd", "jobs", "fg", "unalias", "alias", "kill", "listdir", "whoami", "netinfo"};
 
     unordered_map<string, string> aliases;
     std::list<std::pair<std::string, std::string>> alias_list;

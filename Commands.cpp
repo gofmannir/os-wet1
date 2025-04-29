@@ -471,6 +471,10 @@ Command *SmallShell::CreateCommand(const char *cmd_line)
     {
         return new UnAliasCommand(cmd_line);
     }
+    if (firstWord.compare("unsetenv") == 0)
+    {
+        return new UnSetEnvCommand(cmd_line);
+    }
     if (firstWord.compare("pwd") == 0)
     {
         return new PwdCommand(cmd_line);
@@ -533,6 +537,96 @@ void ChpromptCommand::execute()
     else
     {
         smash.setPrompt(this->args[1]);
+    }
+}
+
+bool UnSetEnvCommand::getEnv(const char *env_name)
+{
+    std::string env_name_str(env_name);
+    std::string env_value;
+
+    // Open the /proc/<pid>/environ file
+    std::string environ_path = "/proc/" + std::to_string(getpid()) + "/environ";
+    int environ_fd = open(environ_path.c_str(), O_RDONLY);
+    if (environ_fd == -1)
+    {
+        return false;
+    }
+
+    char buffer[BUF_SIZE];
+    ssize_t bytes_read = 0;
+    std::string leftover_data;
+
+    while ((bytes_read = readLine(environ_fd, buffer, sizeof(buffer))) > 0)
+    {
+        std::string data(buffer, bytes_read);
+        leftover_data += data;
+
+        size_t pos = 0;
+        while ((pos = leftover_data.find('\0')) != std::string::npos)
+        {
+            std::string env_entry = leftover_data.substr(0, pos);
+            leftover_data = leftover_data.substr(pos + 1);
+
+            size_t equal_pos = env_entry.find('=');
+            if (equal_pos != std::string::npos)
+            {
+                std::string key = env_entry.substr(0, equal_pos);
+                std::string value = env_entry.substr(equal_pos + 1);
+
+                if (key == env_name_str)
+                {
+                    env_value = value;
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+void UnSetEnvCommand::removeEnv(const char *env_name)
+{
+    extern char **environ;
+    // Remove the environment variable from the environ array
+    char **env = environ;
+    while (*env)
+    {
+        if (strncmp(*env, env_name, strlen(env_name)) == 0 && (*env)[strlen(env_name)] == '=')
+        {
+            char **next = env + 1;
+            while (*next)
+            {
+                *env = *next;
+                env++;
+                next++;
+            }
+            *env = nullptr;
+            break;
+        }
+        env++;
+    }
+}
+
+void UnSetEnvCommand::execute()
+{
+    if (this->args_count == 1)
+    {
+        cerr << "smash error: unsetenv: not enough arguments" << endl;
+    }
+
+    SmallShell &smash = SmallShell::getInstance();
+    for (int i = 1; i < this->args_count; ++i)
+    {
+        if (!this->getEnv(this->args[i]))
+        {
+            // env doesnt exists
+            cerr << "smash error: unsetenv: " << this->args[i] << " does not exist" << endl;
+            return;
+        }
+
+        this->removeEnv(this->args[i]);
     }
 }
 

@@ -338,31 +338,41 @@ void RedirectionCommand::execute()
     close(temp_stdout_fd);
 }
 
-static ssize_t readLine(int fd, char *buffer, size_t max_len)
+// Reads a line from the given file descriptor into the buffer, up to max_len characters.
+// Returns the number of characters read, or -1 on error.
+static ssize_t readLine(int fileDescriptor, char *outputBuffer, size_t maxLength)
 {
-    size_t i = 0;
-    char c;
-    while (i < max_len - 1)
+    size_t currentIndex = 0; // Tracks the current position in the buffer
+    char currentChar;        // Temporary storage for the character being read
+
+    // Loop until the buffer is full or a newline/EOF is encountered
+    while (currentIndex < maxLength - 1)
     {
-        ssize_t n = read(fd, &c, 1);
-        if (n < 0)
+        ssize_t bytesRead = read(fileDescriptor, &currentChar, 1); // Read one character at a time
+        if (bytesRead < 0)
         {
+            // Error occurred during read
             perror("smash error: read failed");
             return -1;
         }
-        if (n == 0)
-        { // EOF
-            break;
-        }
-        if (c == '\n')
+        if (bytesRead == 0)
         {
-            buffer[i++] = c;
+            // End of file (EOF) reached
             break;
         }
-        buffer[i++] = c;
+        if (currentChar == '\n')
+        {
+            // Newline character indicates the end of the line
+            outputBuffer[currentIndex++] = currentChar;
+            break;
+        }
+        // Store the character in the buffer
+        outputBuffer[currentIndex++] = currentChar;
     }
-    buffer[i] = '\0';
-    return (ssize_t)i;
+
+    // Null-terminate the string
+    outputBuffer[currentIndex] = '\0';
+    return (ssize_t)currentIndex; // Return the number of characters read
 }
 
 Command *SmallShell::CreateCommand(const char *cmd_line)
@@ -469,6 +479,10 @@ Command *SmallShell::CreateCommand(const char *cmd_line)
     {
         return new ChangeDirCommand(cmd_line, getPlastPwd());
     }
+    if (firstWord.compare("watchproc") == 0)
+    {
+        return new WatchProcCommand(cmd_line);
+    }
     if (firstWord.compare("whoami") == 0)
     {
         return new WhoAmICommand(cmd_line);
@@ -547,6 +561,124 @@ void PwdCommand::execute()
     {
         perror("smash error: getcwd failed");
     }
+}
+
+void WatchProcCommand::execute()
+{
+    if (this->args_count != 2)
+    {
+        cerr << "smash error: watchproc: invalid arguments" << endl;
+        return;
+    }
+
+    pid_t pid = std::stoi(this->args[1]);
+    if (kill(pid, 0) == -1)
+    {
+        cerr << "smash error: watchproc: pid " << pid << " does not exist" << endl;
+        return;
+    }
+
+    // Open the /proc/<pid>/stat file to get CPU and memory usage
+    std::string stat_path = "/proc/" + std::to_string(pid) + "/stat";
+    int stat_fd = open(stat_path.c_str(), O_RDONLY);
+    if (stat_fd == -1)
+    {
+        // TODO : maybe other msg?
+        cerr << "smash error: watchproc: pid " << pid << " does not exist" << endl;
+        return;
+    }
+
+    char stat_buf[BUF_SIZE];
+    ssize_t stat_read = readLine(stat_fd, stat_buf, sizeof(stat_buf));
+    if (stat_read <= 0)
+    {
+        // TODO : maybe another msg?
+        cerr << "smash error: watchproc: pid " << pid << " does not exist" << endl;
+        close(stat_fd);
+        return;
+    }
+    close(stat_fd);
+
+    // Parse the /proc/<pid>/stat file
+    std::istringstream stat_stream(stat_buf);
+    std::string token;
+    std::vector<std::string> stat_fields;
+    while (stat_stream >> token)
+    {
+        stat_fields.push_back(token);
+    }
+
+    // Ensure we have enough fields
+    if (stat_fields.size() < 24)
+    {
+        // TODO : make sure need this?
+        cerr << "smash error: watchproc: pid " << pid << " does not exist" << endl;
+        return;
+    }
+
+    // Extract CPU usage (utime + stime)
+    long utime = std::stol(stat_fields[13]);
+    long stime = std::stol(stat_fields[14]);
+    long total_time = utime + stime;
+
+    // Get system uptime from /proc/uptime
+    int uptime_fd = open("/proc/uptime", O_RDONLY);
+    if (uptime_fd == -1)
+    {
+        // TODO : make sure err msg
+        cerr << "smash error: watchproc: pid " << pid << " does not exist" << endl;
+        return;
+    }
+
+    char uptime_buf[BUF_SIZE];
+    ssize_t uptime_read = readLine(uptime_fd, uptime_buf, sizeof(uptime_buf));
+    if (uptime_read <= 0)
+    {
+        // TODO : Make sure err msg
+        cerr << "smash error: watchproc: pid " << pid << " does not exist" << endl;
+        close(uptime_fd);
+        return;
+    }
+    close(uptime_fd);
+
+    double uptime;
+    std::istringstream uptime_stream(uptime_buf);
+    uptime_stream >> uptime;
+
+    // Calculate CPU usage
+    long hertz = sysconf(_SC_CLK_TCK);
+    double seconds = uptime - (std::stol(stat_fields[21]) / hertz);
+    double cpu_usage = 100.0 * ((total_time / static_cast<double>(hertz)) / seconds);
+
+    // Get memory usage from /proc/<pid>/statm
+    std::string statm_path = "/proc/" + std::to_string(pid) + "/statm";
+    int statm_fd = open(statm_path.c_str(), O_RDONLY);
+    if (statm_fd == -1)
+    {
+        cerr << "smash error: watchproc: pid " << pid << " does not exist" << endl;
+        return;
+    }
+
+    char statm_buf[BUF_SIZE];
+    ssize_t statm_read = readLine(statm_fd, statm_buf, sizeof(statm_buf));
+    if (statm_read <= 0)
+    {
+        cerr << "smash error: watchproc: pid " << pid << " does not exist" << endl;
+        close(statm_fd);
+        return;
+    }
+    close(statm_fd);
+
+    // Parse memory usage
+    std::istringstream statm_stream(statm_buf);
+    long resident_pages;
+    statm_stream >> token >> resident_pages;
+    long page_size = sysconf(_SC_PAGESIZE);
+    double memory_usage_mb = (resident_pages * page_size) / (1024.0 * 1024.0);
+
+    // Print CPU and memory usage
+    std::cout << "PID: " << pid << " | CPU Usage: " << std::fixed << std::setprecision(1) << cpu_usage
+              << "% | Memory Usage: " << std::fixed << std::setprecision(1) << memory_usage_mb << " MB" << std::endl;
 }
 
 void ChangeDirCommand::execute()

@@ -156,6 +156,18 @@ public:
     void execute() override;
 };
 
+class WatchProcCommand : public BuiltInCommand
+{
+public:
+    WatchProcCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {}
+
+    virtual ~WatchProcCommand()
+    {
+    }
+
+    void execute() override;
+};
+
 class GetCurrDirCommand : public BuiltInCommand
 {
 public:
@@ -314,18 +326,6 @@ public:
     UnSetEnvCommand(const char *cmd_line);
 
     virtual ~UnSetEnvCommand()
-    {
-    }
-
-    void execute() override;
-};
-
-class WatchProcCommand : public BuiltInCommand
-{
-public:
-    WatchProcCommand(const char *cmd_line);
-
-    virtual ~WatchProcCommand()
     {
     }
 
